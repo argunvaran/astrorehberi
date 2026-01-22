@@ -499,43 +499,75 @@ def get_daily_planner(request):
 
 
 @csrf_exempt
-@csrf_exempt
 def draw_tarot(request):
     """
     Draws 3 cards (Past, Present, Future) and generates a synthesis.
+    Supports manual selection via POST.
     """
     try:
-        # Select 3 unique cards
-        selection = random.sample(tarot_deck, 3)
+        lang = 'en'
+        manual_selection = []
+        
+        if request.method == 'POST':
+            # ... existing manual logic ...
+            try:
+                data = json.loads(request.body)
+                lang = data.get('lang', 'en')
+                input_cards = data.get('cards', []) # [{'id':'fool', 'reversed':False}, ...]
+                
+                for item in input_cards:
+                    c_obj = next((x for x in tarot_deck if x['id'] == item['id']), None)
+                    if c_obj:
+                        manual_selection.append({
+                            'card': c_obj,
+                            'is_reversed': item.get('reversed', False)
+                        })
+            except:
+                 pass # Fallback to random if JSON fails
+        else:
+            lang = request.GET.get('lang', 'en')
+
+        # Select 3 unique cards if not manual
+        if manual_selection:
+            selection_data = manual_selection
+        else:
+            raw_selection = random.sample(tarot_deck, 3)
+            selection_data = [{'card': c, 'is_reversed': random.choice([True, False])} for c in raw_selection]
         
         response_cards = []
         positions = ['Past', 'Present', 'Future']
         positions_tr = ['Geçmiş', 'Şimdi', 'Gelecek']
         
-        lang = request.GET.get('lang', 'en')
-        
         # Scoring Logic
-        # IDs are 0 to 21 based on Major Arcana index usually
-        # 0:Fool, 1:Magician, 2:HighPriestess, 3:Empress, 4:Emperor, 5:Hierophant, 6:Lovers, 7:Chariot, 8:Strength
-        # 9:Hermit, 10:Wheel, 11:Justice, 12:HangedMan, 13:Death, 14:Temperance, 15:Devil, 16:Tower, 17:Star, 18:Moon
-        # 19:Sun, 20:Judgement, 21:World
-        POSITIVE_CARDS = [1, 3, 4, 6, 7, 8, 10, 11, 14, 17, 19, 20, 21] 
-        NEGATIVE_CARDS = [9, 12, 13, 15, 16, 18, 5] # Included Hierophant as neutral/strict
+        # POSITIVE_CARDS based on Major Arcana Index:
+        # [1 (Magician), 3 (Empress), 4 (Emperor), 6 (Lovers), 7 (Chariot), 8 (Strength), 10 (Wheel), 11 (Justice), 14 (Temperance), 17 (Star), 19 (Sun), 20 (Judgement), 21 (World)]
+        # We need to map these indices to the FULL DECK or check IDs.
+        # Since we switched to full deck, using index is risky if order changes.
+        # Let's map by ID string for safety.
+        POSITIVE_IDS = [
+            "magician", "empress", "emperor", "lovers", "chariot", "strength", 
+            "wheel_of_fortune", "justice", "temperance", "star", "sun", "judgement", "world",
+            "ace_cups", "two_cups", "ten_cups", "ace_pentacles", "nine_pentacles", "ten_pentacles", "ace_wands", "four_wands", "six_wands"
+        ]
+        NEGATIVE_IDS = [
+            "hermit", "hanged_man", "death", "devil", "tower", "moon", "five_pentacles", "five_swords", "three_swords", "nine_swords", "ten_swords", "five_cups"
+        ] # Added some minors
         
         total_score = 0
         meanings_list = []
         
-        for i, card in enumerate(selection):
-            is_reversed = random.choice([True, False])
+        for i, item in enumerate(selection_data):
+            card = item['card']
+            is_reversed = item['is_reversed']
             
             # Meaning
             if lang == 'tr':
-                meaning = card['meaning_reversed_tr'] if is_reversed else card['meaning_upright_tr']
-                name = card['name_tr']
+                meaning = card.get('meaning_reversed_tr') if is_reversed else card.get('meaning_upright_tr')
+                name = card.get('name_tr')
                 pos_name = positions_tr[i]
             else:
-                meaning = card['meaning_reversed_en'] if is_reversed else card['meaning_upright_en']
-                name = card['name_en']
+                meaning = card.get('meaning_reversed_en') if is_reversed else card.get('meaning_upright_en')
+                name = card.get('name_en')
                 pos_name = positions[i]
 
             meanings_list.append(meaning)
@@ -543,15 +575,15 @@ def draw_tarot(request):
             # Score Calculation
             card_id = card['id']
             score = 0
-            if card_id in POSITIVE_CARDS:
+            if card_id in POSITIVE_IDS:
                 score = 10
-            elif card_id in NEGATIVE_CARDS:
+            elif card_id in NEGATIVE_IDS:
                 score = -10
             else:
-                score = 5 # Neutral/Slightly positive
+                score = 5 # Neutral
                 
             if is_reversed:
-                score *= -0.5 # Reversal twists the energy (Bad becomes less bad/internal, Good becomes blocked)
+                score *= -0.5 
                 
             total_score += score
 
@@ -638,10 +670,157 @@ def calculate_career_view(request):
         
         return JsonResponse(career_result)
 
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def rectify_birth_time(request):
+    """
+    Rectifies birth time based on major life events.
+    Scans 24 hours of the birth date to find Ascendant/MC matches with Event Transits.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST request required'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        birth_date = data.get('date') # YYYY/MM/DD or YYYY-MM-DD
+        lat = float(data.get('lat', 41.0))
+        lon = float(data.get('lon', 28.0))
+        lang = data.get('lang', 'en')
+        events = data.get('events', []) # List of {date: 'YYYY-MM-DD', type: 'marriage'}
+
+        if not birth_date:
+             return JsonResponse({'error': 'Birth date is required'}, status=400)
+
+        birth_date = birth_date.replace('-', '/')
+        
+        # Engine
+        engine = AstroEngine()
+        
+        # 1. Pre-calculate Transits for each Event (at Noon)
+        # We only need the positions of heavy planets: Jupiter, Saturn, Uranus, Neptune, Pluto, Nodes
+        heavy_planets = ['Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto', 'North Node']
+        event_transits = []
+        
+        for e in events:
+            edate = e.get('date', '').replace('-', '/')
+            etype = e.get('type', 'general')
+            if not edate: continue
+            
+            # calculate chart for event
+            try:
+                t_chart = engine.calculate_natal(edate, "12:00", lat, lon)
+                t_planets = [p for p in t_chart['planets'] if p['name'] in heavy_planets]
+                event_transits.append({'type': etype, 'planets': t_planets, 'date': edate})
+            except:
+                continue
+                
+        # 2. Iterate through 24 hours (Step: 10 minutes = 144 steps)
+        # 10 min step approx 2.5 degrees of Ascendant. Acceptable for rough rectification.
+        scores = []
+        
+        start_time = datetime.strptime(birth_date + " 00:00", "%Y/%m/%d %H:%M")
+        
+        # Weights
+        W_CONJ = 10
+        W_OPP = 8
+        W_SQR = 5
+        W_TRINE = 3 # Trines are soft, but good for validation
+        
+        valid_candidates = []
+
+        # Optimization: We loop 0..144
+        for i in range(144): 
+            minutes = i * 10
+            candidate_dt = start_time + timedelta(minutes=minutes)
+            time_str = candidate_dt.strftime("%H:%M")
+            
+            # Calculate Candidate Angles
+            # We use engine.calculate_natal but it might be heavy to do 144 times if it calls API or deep math?
+            # It uses Skyfield (local binary). Should be fast enough (< 2 sec for 144 calls).
+            candidate = engine.calculate_natal(birth_date, time_str, lat, lon)
+            
+            asc = candidate.get('ascendant_deg', 0.0)
+            mc = candidate.get('midheaven_deg', 0.0)
+            asc_sign = candidate.get('ascendant', 'Aries')
+            
+            score = 0
+            hits = []
+            
+            # Check against Events
+            for et in event_transits:
+                for p in et['planets']:
+                    p_lon = p['lon']
+                    p_name = p['name']
+                    
+                    # Check Ascendant
+                    diff_asc = abs(p_lon - asc) % 180 # Mod 180 covers Conj (0) and Opp (180) near 0 
+                    if diff_asc > 90: diff_asc = 180 - diff_asc
+                    
+                    # Actually standard distance
+                    d = abs(p_lon - asc) % 360
+                    if d > 180: d = 360 - d
+                    
+                    aspect = ""
+                    points = 0
+                    
+                    p_name_display = p_name
+                    if lang == 'tr':
+                        p_name_display = p_name.replace("Jupiter", "Jüpiter").replace("Saturn", "Satürn").replace("Uranus", "Uranüs").replace("Neptune", "Neptün").replace("Pluto", "Plüton").replace("North Node", "Kuzey Düğüm")
+
+                    if d < 4: 
+                        aspect = "Conjunction AC" if lang != 'tr' else "AC ile Kavuşum"
+                        points = W_CONJ
+                    elif abs(d - 180) < 4:
+                        aspect = "Opposition AC" if lang != 'tr' else "AC ile Karşıt"
+                        points = W_OPP
+                    elif abs(d - 90) < 4:
+                        aspect = "Square AC" if lang != 'tr' else "AC ile Kare"
+                        points = W_SQR
+                    
+                    if points > 0:
+                        score += points
+                        hits.append(f"{et['date']} {p_name_display} {aspect}")
+                        
+                    # Check MC
+                    d_mc = abs(p_lon - mc) % 360
+                    if d_mc > 180: d_mc = 360 - d_mc
+                    
+                    if d_mc < 4:
+                        score += W_CONJ
+                        aspect = "Conj MC" if lang != 'tr' else "MC ile Kavuşum"
+                        hits.append(f"{et['date']} {p_name_display} {aspect}")
+                    elif abs(d_mc - 180) < 4:
+                        score += W_OPP
+                        aspect = "Opp MC" if lang != 'tr' else "MC ile Karşıt"
+                        hits.append(f"{et['date']} {p_name_display} {aspect}")
+            
+            if score > 0:
+                scores.append({
+                    'time': time_str,
+                    'score': score,
+                    'asc_sign': asc_sign,
+                    'hits': hits
+                })
+        
+        # Sort by score
+        scores.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Filter top 3 distinct Ascendant Signs if possible, or just top 3 times
+        top_candidates = scores[:3]
+        
+        return JsonResponse({'candidates': top_candidates})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
 
 
 def index(request):

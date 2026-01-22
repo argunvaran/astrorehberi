@@ -239,6 +239,11 @@ class AstroEngine:
             # Normalize to 0-360
             ac_deg = ac_deg % 360
             
+            # C. Calculate MC (Midheaven)
+            # Formula: tan(MC) = tan(LST) / cos(Eps) -> atan2(sin(lst), cos(lst)*cos(eps))
+            mc_rad = math.atan2(math.sin(lst_rad), math.cos(lst_rad) * math.cos(eps_rad))
+            mc_deg = math.degrees(mc_rad) % 360
+
             # Determine Sign
             asc_idx = int(ac_deg / 30)
             asc_sign = SIGNS[asc_idx]
@@ -247,6 +252,7 @@ class AstroEngine:
             print(f"ASC Calculation Failed: {e}")
             asc_sign = "Aries" # Fallback only on math failure
             ac_deg = 0.0
+            mc_deg = 0.0
 
         
         # HOUSES (Whole Sign)
@@ -281,10 +287,48 @@ class AstroEngine:
             'planets': planets_data,
             'houses': houses,
             'ascendant': asc_sign,
+            'ascendant_deg': ac_deg,
+            'midheaven_deg': mc_deg,
             'north_node': node_lon,
             'utc_time': t.utc_strftime('%Y-%m-%d %H:%M:%S'),
             'timezone': tz_display
         }
+
+    def calculate_angles_light(self, t, lat, lon):
+        """
+        Fast calculation of only Ascendant and MC.
+        Bypasses planet calculations for Rectification loops.
+        """
+        try:
+             # A. Get Sidereal Time
+            gast = t.gast
+            gast_deg = gast * 15.0
+            lst_deg = (gast_deg + lon) % 360
+            lst_rad = math.radians(lst_deg)
+            lat_rad = math.radians(lat)
+            eps_rad = math.radians(23.4392911) 
+
+            # B. Ascendant
+            num = math.cos(lst_rad)
+            den = - ((math.sin(lst_rad) * math.cos(eps_rad)) + (math.tan(lat_rad) * math.sin(eps_rad)))
+            ac_rad = math.atan2(num, den)
+            ac_deg = math.degrees(ac_rad) % 360
+            
+            # C. MC
+            mc_rad = math.atan2(math.sin(lst_rad), math.cos(lst_rad) * math.cos(eps_rad))
+            mc_deg = math.degrees(mc_rad) % 360
+            
+            # Sign
+            asc_idx = int(ac_deg / 30)
+            asc_sign = SIGNS[asc_idx]
+            
+            return {
+                'ascendant_deg': ac_deg,
+                'midheaven_deg': mc_deg,
+                'ascendant': asc_sign
+            }
+        except Exception as e:
+            return {'ascendant_deg': 0, 'midheaven_deg': 0, 'ascendant': 'Aries'}
 
     def calculate_mean_node(self, t):
         """Calculates Mean North Node Lon."""

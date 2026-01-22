@@ -9,6 +9,7 @@ urlpatterns = [
     path('weekly-forecast/', views.get_weekly_forecast, name='weekly_forecast'),
     path('draw-tarot/', views.draw_tarot, name='draw_tarot'),
     path('career-analysis/', views.calculate_career_view, name='career_analysis'),
+    path('rectify-time/', views.rectify_birth_time, name='rectify_time'),
     path('countries/', views.get_countries, name='get_countries'),
     path('provinces/', views.get_provinces, name='get_provinces'),
     path('cities/', views.get_cities, name='get_cities'),

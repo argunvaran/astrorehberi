@@ -11,6 +11,8 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Outfit:wght@300;400;600&display=swap"
         rel="stylesheet">
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
             --primary: #0F0C29;
@@ -145,6 +147,12 @@
                     <div style="flex:0.7">
                         <label>Saat</label>
                         <input type="time" id="time" value="12:00" style="text-align:center; color-scheme:dark">
+                        <div style="display:flex; align-items:center; gap:5px; margin-top:5px">
+                            <input type="checkbox" id="reg-unknown-time" onchange="toggleRegUnknownTime()"
+                                style="width:auto; margin:0">
+                            <label for="reg-unknown-time"
+                                style="font-size:0.7rem; opacity:0.8; cursor:pointer; margin:0">Bilinmiyor</label>
+                        </div>
                     </div>
                 </div>
 
@@ -166,6 +174,31 @@
             <input type="password" id="password" placeholder="••••••••">
 
             <button onclick="submitAuth()" id="btn-submit" class="btn">Giriş Yap</button>
+        </div>
+
+        <!-- RECTIFICATION PANEL (Hidden) -->
+        <div id="rectification-panel" style="display:none; animation: fadeIn 0.5s">
+            <h2 style="color:var(--gold); text-align:center; margin-bottom:10px">Doğum Saati Bul</h2>
+            <p style="text-align:center; font-size:0.9rem; opacity:0.8; margin-bottom:20px">
+                Doğum tarihinizi ve saatinizi etkileyen 3 önemli hayat olayını girerek saatinizi hesaplayabiliriz.
+            </p>
+
+            <div id="auth-event-list"></div>
+
+            <button onclick="addAuthEventRow()"
+                style="background:rgba(255,255,255,0.1); border:1px solid var(--border); color:white; width:100%; padding:8px; border-radius:8px; cursor:pointer; margin-bottom:15px">+
+                Olay Ekle</button>
+
+            <div id="auth-rect-results" style="display:none; margin-bottom:15px"></div>
+
+            <button onclick="startAuthRectification()" id="btn-auth-rectify" class="btn">Hesapla</button>
+            <button onclick="cancelRectification()"
+                style="background:transparent; border:none; color:rgba(255,255,255,0.5); width:100%; margin-top:10px; cursor:pointer">Vazgeç</button>
+
+            <!-- Loader -->
+            <div id="auth-rect-loader" style="display:none; text-align:center; margin-top:10px; color:var(--gold)">
+                <i class="fas fa-circle-notch fa-spin"></i> Analiz ediliyor...
+            </div>
         </div>
 
         <div style="text-align:center; margin-top:20px">
@@ -259,6 +292,132 @@
                 cityName = `${prov} / ${cityName}`;
             }
             document.getElementById('placename').value = cityName;
+        }
+
+        function toggleRegUnknownTime() {
+            const chk = document.getElementById('reg-unknown-time');
+            if (chk.checked) {
+                // Hide Form, Show Rectification
+                document.getElementById('form-content').style.display = 'none';
+                document.getElementById('rectification-panel').style.display = 'block';
+                document.querySelector('.tabs').style.display = 'none'; // Hide tabs to prevent switching
+
+                // Initialize events if empty
+                const list = document.getElementById('auth-event-list');
+                if (list.children.length === 0) {
+                    addAuthEventRow(); addAuthEventRow(); addAuthEventRow();
+                }
+            }
+        }
+
+        function cancelRectification() {
+            document.getElementById('reg-unknown-time').checked = false;
+            document.getElementById('form-content').style.display = 'block';
+            document.getElementById('rectification-panel').style.display = 'none';
+            document.querySelector('.tabs').style.display = 'flex';
+
+            // Re-enable time input just in case (though it was never disabled in this flow logic anymore)
+            const timeInput = document.getElementById('time');
+            timeInput.disabled = false;
+            timeInput.style.opacity = '1';
+        }
+
+        function addAuthEventRow() {
+            const div = document.createElement('div');
+            div.className = 'event-row';
+            div.style = 'display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap';
+            div.innerHTML = `
+                <select class="event-type" style="flex:1; min-width:120px; background:rgba(0,0,0,0.3); border:1px solid var(--border); border-radius:8px; color:white; padding:10px">
+                    <option value="marriage">Evlilik</option>
+                    <option value="child_birth">Çocuk Doğumu</option>
+                    <option value="career_change">Kariyer Sıçraması</option>
+                    <option value="relocation">Taşınma</option>
+                    <option value="accident">Kaza/Ameliyat</option>
+                    <option value="loss">Kayıp/Vefat</option>
+                </select>
+                <input type="date" class="event-date" style="flex:1; min-width:120px; margin-bottom:0; color-scheme:dark">
+            `;
+            document.getElementById('auth-event-list').appendChild(div);
+        }
+
+        async function startAuthRectification() {
+            const date = document.getElementById('date').value;
+            const lat = document.getElementById('lat').value || 41.0;
+            const lon = document.getElementById('lon').value || 29.0;
+            const loader = document.getElementById('auth-rect-loader');
+            const resDiv = document.getElementById('auth-rect-results');
+
+            // Gather events
+            const events = [];
+            document.querySelectorAll('#auth-event-list .event-row').forEach(row => {
+                const type = row.querySelector('.event-type').value;
+                const d = row.querySelector('.event-date').value;
+                if (d && d.length > 5) events.push({ type, date: d });
+            });
+
+            if (events.length === 0) {
+                alert("Lütfen en az bir olay tarihi girin.");
+                return;
+            }
+
+            loader.style.display = 'block';
+            resDiv.style.display = 'none';
+            document.getElementById('btn-auth-rectify').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/rectify-time/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ date, lat, lon, events, lang: 'tr' }) // Force Turkish
+                });
+                const data = await response.json();
+
+                loader.style.display = 'none';
+                resDiv.style.display = 'block';
+                document.getElementById('btn-auth-rectify').style.display = 'block';
+
+                if (data.candidates && data.candidates.length > 0) {
+                    let html = `
+                        <div style="background:rgba(255,215,0,0.1); border-left:3px solid var(--gold); padding:10px; margin-bottom:15px; font-size:0.8rem; line-height:1.4">
+                            <strong style="color:var(--gold)">Nasıl Seçim Yapmalısınız?</strong><br>
+                            Bu saatler, yaşadığınız olaylardaki gezegen konumlarının haritanızla yaptığı açılara göre puanlanmıştır.<br><br>
+                            En yüksek puanlı sonuç matematiksel olarak en olasıdır. Ancak, <strong>Yükselen Burcunuzun</strong> fiziksel özelliklerinize ve karakterinize uyup uymadığını kontrol ederek seçim yapınız.
+                        </div>
+                    `;
+                    data.candidates.slice(0, 3).forEach(c => {
+                        html += `
+                        <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:10px; border:1px solid var(--border); display:flex; justify-content:space-between; align-items:center">
+                            <div>
+                                <div style="display:flex; align-items:center; gap:10px">
+                                    <div style="font-size:1.2rem; font-weight:bold; color:var(--text)">${c.time}</div>
+                                    <div style="background:var(--accent); color:white; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:bold">${c.score} Puan</div>
+                                </div>
+                                <div style="font-size:0.8rem; opacity:0.7">${c.asc_sign} Yükselen</div>
+                            </div>
+                            <button onclick="applyAuthTime('${c.time}')" style="background:var(--accent); border:none; color:white; padding:5px 15px; border-radius:20px; cursor:pointer; font-size:0.9rem">Seç</button>
+                        </div>`;
+                    });
+                    resDiv.innerHTML = html;
+                } else {
+                    resDiv.innerHTML = '<div style="text-align:center; padding:10px">Eşleşme bulunamadı.</div>';
+                }
+
+            } catch (e) {
+                loader.style.display = 'none';
+                resDiv.style.display = 'block';
+                resDiv.innerHTML = 'Hata oluştu.';
+                document.getElementById('btn-auth-rectify').style.display = 'block';
+            }
+        }
+
+        function applyAuthTime(time) {
+            document.getElementById('time').value = time;
+            // Finish
+            cancelRectification();
+            // Highlight
+            const tInput = document.getElementById('time');
+            tInput.style.border = '2px solid var(--gold)';
+            setTimeout(() => tInput.style.border = '1px solid var(--border)', 2000);
         }
 
         function switchTab(mode) {
