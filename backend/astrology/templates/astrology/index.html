@@ -353,8 +353,13 @@
             padding: 0 5px;
             letter-spacing: 1px;
         }
-    </style>
 
+        .line-clamp-editorial {
+            display: -webkit-box;
+            -webkit-line-clamp: 5;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
     </style>
 </head>
 
@@ -406,10 +411,16 @@
                 <i class="fas fa-hourglass-half"></i> <span data-i18n="menu_hours">Planetary Hours</span>
             </div>
 
-            <!-- ADMIN LINK (HIDDEN BY DEFAULT) -->
+            <!-- ADMIN LINK -->
             <div id="admin-nav-item" class="nav-item" onclick="window.open('/api/custom-admin/', '_blank')"
-                style="display:none; border: 1px solid #E94560; background: rgba(233,69,96,0.2); color: #E94560">
+                style="display: {% if user.is_superuser %}flex{% else %}none{% endif %}; border: 1px solid #E94560; background: rgba(233,69,96,0.2); color: #E94560">
                 <i class="fas fa-satellite-dish"></i> <span>Kozmik Panel</span>
+            </div>
+
+            <!-- EDITOR LINK -->
+            <div id="editor-nav-item" class="nav-item" onclick="window.location.href='/editorial/'"
+                style="display: {% if user.is_superuser %}flex{% else %}none{% endif %}; border: 1px solid var(--gold); background: rgba(255, 215, 0, 0.1); color: var(--gold)">
+                <i class="fas fa-feather-alt"></i> <span>Editör Paneli</span>
             </div>
 
             <!-- GLOBAL LANGUAGE SELECTOR -->
@@ -494,14 +505,11 @@
                             <input type="text" id="date"
                                 value="{{ profile.birth_date|date:'Y/m/d'|default:'1990/01/01' }}" {% if profile %}readonly style="opacity:0.7; cursor:not-allowed" {% endif %} placeholder="YYYY/MM/DD">
                                 
-
-
                         </div>
                         <div>
-                            <label data-i18n="label_time">Birth Time</label>
+                            <label data-i18n="label_time">Birth Time</label> 
                             <input type="text" id="time" value="{{ profile.birth_time|time:'H:i'|default:'12:00' }}" {% if profile %}readonly style="opacity:0.7; cursor:not-allowed" {% endif %}>
                                 
-
 
                             <!-- Unknown time checkbox removed as per user request -->
                         </div>
@@ -509,18 +517,12 @@
                         <div>
                             <label data-i18n="label_lat">Latitude</label>
                             <input type="number" id="lat" value="{{ profile.lat|default:'41.0082' }}" {% if profile %}readonly style="opacity:0.7; cursor:not-allowed" {% endif %}>
-                               
-
-
-
+                                
                         </div>
                         <div>
                             <label data-i18n="label_lon">Longitude</label>
                             <input type="number" id="lon" value="{{ profile.lon|default:'28.9784' }}" {% if profile %}readonly style="opacity:0.7; cursor:not-allowed" {% endif %}>
                                 
-
-
-
                         </div>
                     </div>
 
@@ -544,6 +546,8 @@
                     <p style="color:rgba(255,255,255,0.6); margin-top:5px" data-i18n="daily_subtitle">Your 7-Day Fortune
                         Outlook</p>
                 </div>
+
+                <!-- Weekly Editorial Removed from Dashboard -->
 
                 <div class="glass-card">
                     <h3 style="color:var(--gold); display:flex; justify-content:space-between">
@@ -2227,7 +2231,65 @@
                 if (dData.hours && typeof renderHours === 'function') {
                     renderHours(dData.hours);
                 }
+
+                // FETCH WEEKLY EDITORIAL
+                try {
+                    const eRes = await fetch('/editorial/api/latest/');
+                    const eData = await eRes.json();
+                    if (eData.exists) {
+                        const editorialEl = document.getElementById('dash-weekly-editorial');
+                        editorialEl.style.display = 'block';
+
+                        document.getElementById('dwe-title').innerHTML = eData.title;
+                        document.getElementById('dwe-date').innerText = eData.date;
+
+                        const contentDiv = document.getElementById('dwe-content');
+                        contentDiv.innerHTML = eData.content;
+
+                        // Check if content is long enough to clamp
+                        // We can just add the class comfortably, and check approximate length to show button
+                        if (eData.content.length > 300) {
+                            contentDiv.classList.add('line-clamp-editorial');
+                            document.getElementById('btn-toggle-editorial').style.display = 'flex';
+                        } else {
+                            document.getElementById('btn-toggle-editorial').style.display = 'none';
+                        }
+
+                    } else {
+                        // If no content but USER IS ADMIN, show a placeholder asking to write one
+                        // We can check local 'currentUser' variable or just rely on the button being visible
+                        if (document.getElementById('btn-edit-editorial') && document.getElementById('btn-edit-editorial').style.display !== 'none') {
+                            document.getElementById('dash-weekly-editorial').style.display = 'block';
+                            document.getElementById('dwe-title').innerHTML = "Henüz Haftalık Yorum Girilmedi";
+                            document.getElementById('dwe-content').innerHTML = "Yeni bir haftalık yorum yazmak için 'Düzenle' butonuna tıklayın.";
+                            document.getElementById('btn-toggle-editorial').style.display = 'none';
+                        }
+                    }
+                } catch (err) { console.error(err); }
+
             } catch (e) { console.error(e); }
+        }
+
+        // EDITORIAL TOGGLE LOGIC
+        function toggleEditorial() {
+            const contentDiv = document.getElementById('dwe-content');
+            const icon = document.getElementById('icon-toggle-editorial');
+            const label = document.getElementById('label-toggle-editorial');
+
+            // Toggle class
+            contentDiv.classList.toggle('line-clamp-editorial');
+
+            const isClamped = contentDiv.classList.contains('line-clamp-editorial');
+
+            if (!isClamped) {
+                // Expanded
+                icon.className = 'fas fa-chevron-up';
+                label.innerText = document.getElementById('lang').value === 'tr' ? 'Küçült' : 'Show Less';
+            } else {
+                // Collapsed
+                icon.className = 'fas fa-chevron-down';
+                label.innerText = document.getElementById('lang').value === 'tr' ? 'Devamını Oku' : 'Read More';
+            }
         }
 
         // ==========================================
@@ -2385,8 +2447,14 @@
                     updateAuthUI(true, data.username);
                     document.getElementById('auth-modal').style.display = 'none';
 
-                    if (data.is_superuser) {
-                        document.getElementById('admin-nav-item').style.display = 'flex';
+                    if (data.is_superuser || data.username === 'admin') {
+                        const adminBtn = document.getElementById('admin-nav-item');
+                        const editorBtn = document.getElementById('editor-nav-item');
+                        const editContentBtn = document.getElementById('btn-edit-editorial');
+
+                        if (adminBtn) adminBtn.style.display = 'flex';
+                        if (editorBtn) editorBtn.style.display = 'flex';
+                        if (editContentBtn) editContentBtn.style.display = 'inline-flex';
                     }
 
                     // Auto-Fill & Lock Profile Data
@@ -2567,6 +2635,34 @@
                 });
                 console.log("Profile auto-saved.");
             } catch (e) { console.error("Save failed", e); }
+        }
+
+        // EDITORIAL TOGGLE LOGIC
+        function toggleEditorial() {
+            const contentDiv = document.getElementById('dwe-content');
+            const icon = document.getElementById('icon-toggle-editorial');
+            const label = document.getElementById('label-toggle-editorial');
+
+            const fullText = contentDiv.dataset.fullText;
+            const isTruncated = contentDiv.dataset.isTruncated === 'true';
+
+            if (isTruncated) {
+                // EXPAND
+                contentDiv.innerHTML = fullText;
+                contentDiv.dataset.isTruncated = 'false';
+
+                icon.className = 'fas fa-chevron-up';
+                label.innerText = document.getElementById('lang').value === 'tr' ? 'Küçült' : 'Show Less';
+            } else {
+                // COLLAPSE
+                // Re-truncate
+                const limit = 300;
+                contentDiv.innerHTML = fullText.substring(0, limit) + "...";
+                contentDiv.dataset.isTruncated = 'true';
+
+                icon.className = 'fas fa-chevron-down';
+                label.innerText = document.getElementById('lang').value === 'tr' ? 'Devamını Oku' : 'Read More';
+            }
         }
     </script>
 
